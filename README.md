@@ -43,22 +43,37 @@ src/
 
 ## Persistence
 
-Everything saves to `localStorage` (single device). All reads/writes go through
-`src/store/storage.ts` — only those two functions (`load` / `save`) need to change
-to move to a backend.
+The app works two ways, decided automatically by whether the Supabase env vars are set:
 
-### Moving to Supabase (your existing stack)
+- **No env vars** → `localStorage` (single device, no login). Good for `npm run dev` right away.
+- **Env vars set** → Supabase Postgres + auth, synced across devices, scoped per user.
 
-1. `npm install @supabase/supabase-js`
-2. Add env vars in `.env.local`: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
-3. Create a table, e.g. `workspaces (user_id uuid primary key, data jsonb)` with
-   row-level security so each user only sees their own row.
-4. Make `load()` / `save()` in `storage.ts` async (the commented sketch in that file
-   shows the shape), then `await` them in `AppContext` (`init` becomes an effect that
-   loads on mount). The rest of the app is untouched because nothing else reads storage.
+All reads/writes go through `src/store/storage.ts`. Your whole app state is stored as one
+JSONB row per user in a `workspaces` table — simple, and it preserves the app's data shape.
+(If you ever outgrow it, you can normalise into per-entity tables; nothing else in the app
+reads storage directly.)
+
+## Connect Supabase
+
+1. Create a project at supabase.com.
+2. **Run the schema**: Dashboard → SQL Editor → paste `supabase/schema.sql` → Run. This
+   creates the `workspaces` table and the row-level-security policies that lock each row to
+   its owner.
+3. **Auth**: Dashboard → Authentication → Providers → Email is on by default. For instant
+   solo testing, turn **off** "Confirm email" (Authentication → Sign In / Providers) so a new
+   account logs in immediately; otherwise confirm via the emailed link before signing in.
+4. **Env vars**: copy `.env.example` to `.env.local` and fill in from
+   Project Settings → API:
+   ```
+   VITE_SUPABASE_URL=https://xxxx.supabase.co
+   VITE_SUPABASE_ANON_KEY=eyJ...
+   ```
+5. `npm run dev` — you'll now get a login screen, and your data saves to Supabase
+   (debounced ~0.6s after changes).
 
 ## Deploy to Vercel
 
-Push to GitHub, import the repo in Vercel. It auto-detects Vite — build command
-`npm run build`, output directory `dist`. Add the Supabase env vars in the Vercel
-project settings once you wire the backend.
+Push to GitHub, import the repo in Vercel (auto-detects Vite: build `npm run build`, output
+`dist`). Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the Vercel project's
+Environment Variables, then deploy. Add your deployed URL to Supabase →
+Authentication → URL Configuration so auth redirects resolve.

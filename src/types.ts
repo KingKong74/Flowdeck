@@ -2,7 +2,8 @@ export type WorkspaceKind = 'personal' | 'professional'
 export type Status = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done'
 export type Priority = 'high' | 'med' | 'low'
 export type SprintStatus = 'planned' | 'active' | 'done'
-export type NodeType = 'feature' | 'idea' | 'milestone' | 'risk'
+export type NodeType = 'app' | 'feature' | 'component' | 'infrastructure' | 'view' | 'data' | 'idea' | 'fix'
+export type NodeTag = 'idea' | 'risk'
 export type BacklogStatus = 'todo' | 'doing' | 'done'
 
 export interface SubTask {
@@ -11,12 +12,22 @@ export interface SubTask {
   d: boolean
 }
 
+export interface Comment {
+  id: string
+  text: string
+  ts: number
+}
+
 export interface Task {
   id: string
   title: string
   status: Status
   sprintId: string | null
   prio: Priority
+  due?: string // YYYY-MM-DD
+  mapNodeId?: string // links back to a Map idea node
+  flagged?: boolean // "didn't come out as hoped"
+  comments?: Comment[]
   subs: SubTask[]
 }
 
@@ -32,6 +43,7 @@ export interface CanvasNode {
   title: string
   note: string
   type: NodeType
+  tags: NodeTag[]
   x: number
   y: number
   color: string
@@ -41,6 +53,8 @@ export interface CanvasEdge {
   id: string
   from: string
   to: string
+  fromHandle?: string
+  toHandle?: string
 }
 
 export interface Canvas {

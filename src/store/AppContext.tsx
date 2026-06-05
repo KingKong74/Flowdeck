@@ -1,11 +1,17 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import type { AppData, Project, WorkspaceKind, Status } from '../types'
-import { load, save } from './storage'
+import { hasSupabase, supabase } from '../lib/supabase'
+import { loadLocal, saveLocal, loadRemote, saveRemote } from './storage'
 import { seed, migrate } from './seed'
 
-type Mode = 'overview' | 'project' | 'backlog'
+type Mode = 'overview' | 'project' | 'backlog' | 'settings'
 type Tab = 'board' | 'map'
 type View = 'grid' | 'list'
+type AppStatus = 'loading' | 'auth' | 'ready'
+type Theme = 'dark' | 'light'
+
+const EMPTY: AppData = { meta: {}, projects: [], backlog: [] }
 
 export interface UIState {
   mode: Mode
@@ -13,7 +19,7 @@ export interface UIState {
   view: View
   search: string
   activeProjectId: string | null
-  activeSprint: string // 'all' | 'backlog' | sprintId
+  activeSprint: string
   projectTab: Tab
   openCards: string[]
 }
@@ -25,6 +31,8 @@ export type Modal =
   | { type: 'task'; id?: string; status?: Status }
   | { type: 'node'; id: string }
   | { type: 'backlog'; id?: string; status?: string }
+  | { type: 'sync' }
+  | { type: 'help' }
 
 interface Ctx {
   data: AppData
@@ -33,7 +41,12 @@ interface Ctx {
   setUI: (patch: Partial<UIState>) => void
   modal: Modal
   setModal: (m: Modal) => void
-  // convenience
+  status: AppStatus
+  authEnabled: boolean
+  userEmail: string | null
+  signOut: () => void
+  theme: Theme
+  setTheme: (t: Theme) => void
   wsProjects: () => Project[]
   activeProject: () => Project | null
   openProject: (id: string) => void
@@ -44,16 +57,11 @@ interface Ctx {
 
 const AppCtx = createContext<Ctx | null>(null)
 
-function init(): AppData {
-  const existing = load()
-  if (existing) return migrate(existing)
-  const s = seed()
-  save(s)
-  return s
-}
-
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<AppData>(init)
+  const [data, setData] = useState<AppData>(EMPTY)
+  const [status, setStatus] = useState<AppStatus>('loading')
+  const [session, setSession] = useState<Session | null>(null)
+  const [authReady, setAuthReady] = useState<boolean>(!hasSupabase)
   const [ui, setUIState] = useState<UIState>({
     mode: 'overview',
     workspace: 'personal',
@@ -65,16 +73,89 @@ export function AppProvider({ children }: { children: ReactNode }) {
     openCards: [],
   })
   const [modal, setModal] = useState<Modal>({ type: null })
+  const [theme, setThemeState] = useState<Theme>(
+    () => (localStorage.getItem('flowdeck-theme') as Theme) || 'dark',
+  )
 
-  // persist whenever data changes (skip the very first render)
-  const first = useRef(true)
   useEffect(() => {
-    if (first.current) {
-      first.current = false
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('flowdeck-theme', theme)
+  }, [theme])
+  const setTheme = (t: Theme) => setThemeState(t)
+
+  const skipNextSave = useRef(true)
+  const saveTimer = useRef<number | undefined>(undefined)
+
+  // bootstrap: local mode loads immediately; supabase mode waits for a session
+  useEffect(() => {
+    if (!hasSupabase) {
+      const existing = loadLocal()
+      const d = existing ? migrate(existing) : seed()
+      if (!existing) saveLocal(d)
+      setData(d)
+      setStatus('ready')
       return
     }
-    save(data)
-  }, [data])
+    supabase!.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      setAuthReady(true)
+    })
+    const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => {
+      setSession(s)
+      setAuthReady(true)
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  // load (or seed) the user's data once we know the session
+  useEffect(() => {
+    if (!hasSupabase || !authReady) return
+    if (!session) {
+      setData(EMPTY)
+      setStatus('auth')
+      return
+    }
+    let cancelled = false
+    setStatus('loading')
+    ;(async () => {
+      let existing: AppData | null = null
+      try {
+        existing = await loadRemote(session.user.id)
+      } catch {
+        /* surfaced in console; fall back to a fresh seed */
+      }
+      const d = existing ? migrate(existing) : seed()
+      if (!existing) {
+        try {
+          await saveRemote(session.user.id, d)
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!cancelled) {
+        skipNextSave.current = true
+        setData(d)
+        setStatus('ready')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [session, authReady])
+
+  // debounced persist on every change (skips the freshly-loaded snapshot)
+  useEffect(() => {
+    if (status !== 'ready') return
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      return
+    }
+    window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(() => {
+      if (hasSupabase && session) saveRemote(session.user.id, data)
+      else if (!hasSupabase) saveLocal(data)
+    }, 600)
+  }, [data, status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const mutate = (fn: (d: AppData) => void) =>
     setData((prev) => {
@@ -84,10 +165,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
 
   const setUI = (patch: Partial<UIState>) => setUIState((p) => ({ ...p, ...patch }))
-
   const wsProjects = () => data.projects.filter((p) => p.workspace === ui.workspace)
   const activeProject = () => data.projects.find((p) => p.id === ui.activeProjectId) ?? null
-
   const openProject = (id: string) =>
     setUI({ mode: 'project', activeProjectId: id, projectTab: 'board', activeSprint: 'all' })
   const goOverview = () => setUI({ mode: 'overview', activeProjectId: null })
@@ -98,6 +177,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...p,
       openCards: p.openCards.includes(id) ? p.openCards.filter((x) => x !== id) : [...p.openCards, id],
     }))
+  const signOut = () => {
+    supabase?.auth.signOut()
+  }
 
   const value: Ctx = {
     data,
@@ -106,6 +188,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUI,
     modal,
     setModal,
+    status,
+    authEnabled: hasSupabase,
+    userEmail: session?.user.email ?? null,
+    signOut,
+    theme,
+    setTheme,
     wsProjects,
     activeProject,
     openProject,

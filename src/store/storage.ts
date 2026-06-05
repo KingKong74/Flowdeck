@@ -1,41 +1,39 @@
 import type { AppData } from '../types'
+import { supabase } from '../lib/supabase'
 
-const KEY = 'flowdeck-data-v1'
+const LOCAL_KEY = 'flowdeck-data-v1'
 
-/**
- * Persistence layer. Currently backed by localStorage.
- *
- * To move to Supabase later, swap the bodies of load()/save() for async
- * calls and make them return Promises (then await them in AppContext).
- * The rest of the app only touches these two functions, so nothing else
- * has to change. A sketch:
- *
- *   import { createClient } from '@supabase/supabase-js'
- *   const supabase = createClient(URL, ANON_KEY)
- *   export async function load(): Promise<AppData | null> {
- *     const { data } = await supabase.from('workspaces')
- *       .select('data').eq('user_id', userId).single()
- *     return data?.data ?? null
- *   }
- *   export async function save(d: AppData) {
- *     await supabase.from('workspaces')
- *       .upsert({ user_id: userId, data: d })
- *   }
- */
-
-export function load(): AppData | null {
+/* ---- localStorage (fallback / offline) ---- */
+export function loadLocal(): AppData | null {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(LOCAL_KEY)
     return raw ? (JSON.parse(raw) as AppData) : null
   } catch {
     return null
   }
 }
-
-export function save(d: AppData): void {
+export function saveLocal(d: AppData): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(d))
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(d))
   } catch {
-    /* quota / private-mode — ignore */
+    /* quota / private mode */
   }
+}
+
+/* ---- Supabase: one JSONB row per user in `workspaces` ---- */
+export async function loadRemote(userId: string): Promise<AppData | null> {
+  if (!supabase) return null
+  const { data, error } = await supabase.from('workspaces').select('data').eq('user_id', userId).maybeSingle()
+  if (error) {
+    console.error('Flowdeck load failed:', error.message)
+    throw error
+  }
+  return (data?.data as AppData) ?? null
+}
+export async function saveRemote(userId: string, d: AppData): Promise<void> {
+  if (!supabase) return
+  const { error } = await supabase
+    .from('workspaces')
+    .upsert({ user_id: userId, data: d, updated_at: new Date().toISOString() })
+  if (error) console.error('Flowdeck save failed:', error.message)
 }
