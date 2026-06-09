@@ -1,16 +1,7 @@
-import type { Project, CanvasNode, NodeType } from '../types'
-import { isBuildable } from './helpers'
+import type { Project, CanvasNode } from '../types'
+import { isBuildable, TYPE_LABEL } from './helpers'
 
-const CAP: Record<NodeType, string> = {
-  app: 'App',
-  feature: 'Feature',
-  component: 'Component',
-  infrastructure: 'Infrastructure',
-  view: 'View',
-  data: 'Data',
-  idea: 'Idea',
-  fix: 'Fix',
-}
+const CAP = (t: CanvasNode['type']) => TYPE_LABEL[t].replace(/ \/.*/, '') // "View / Page" -> "View"
 
 /** Idea/fix-tagged nodes are the work to export. */
 export function buildableNodes(p: Project): CanvasNode[] {
@@ -39,11 +30,11 @@ export function canvasToMarkdown(p: Project): string {
   items.forEach((n) => {
     const parent = parentOf(p, n.id)
     const key = parent ? parent.id : 'none'
-    if (!groups.has(key)) groups.set(key, { header: parent ? `${CAP[parent.type]}: ${parent.title}` : 'General', items: [] })
+    if (!groups.has(key)) groups.set(key, { header: parent ? `${CAP(parent.type)}: ${parent.title}` : 'General', items: [] })
     groups.get(key)!.items.push(n)
   })
 
-  let out = ''
+  let out = '~ Changes to implement ~\n\n'
   for (const g of groups.values()) {
     out += `${g.header}\nFeatures:\n\n`
     g.items.forEach((n) => (out += `* ${line(n)}\n`))
@@ -63,11 +54,7 @@ export function canvasToJSON(p: Project) {
 }
 
 export function canvasToPrompt(p: Project): string {
-  return (
-    `Here are the things I want to build in "${p.name}". Please turn each into a concrete ` +
-    `implementation plan — steps, files/areas it touches, and anything to watch out for.\n\n` +
-    canvasToMarkdown(p)
-  )
+  return canvasToMarkdown(p)
 }
 
 export function download(filename: string, content: string, mime: string) {

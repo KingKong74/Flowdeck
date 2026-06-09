@@ -6,7 +6,7 @@ import { loadLocal, saveLocal, loadRemote, saveRemote } from './storage'
 import { seed, migrate } from './seed'
 
 type Mode = 'overview' | 'project' | 'backlog' | 'settings'
-type Tab = 'board' | 'map'
+type Tab = 'board' | 'map' | 'tree'
 type View = 'grid' | 'list'
 type AppStatus = 'loading' | 'auth' | 'ready'
 type Theme = 'dark' | 'light'
@@ -33,6 +33,8 @@ export type Modal =
   | { type: 'backlog'; id?: string; status?: string }
   | { type: 'sync' }
   | { type: 'help' }
+  | { type: 'import'; target?: string }
+  | { type: 'explain'; id: string }
 
 interface Ctx {
   data: AppData

@@ -14,39 +14,29 @@ export const COLS: { id: Status; nm: string; t: string }[] = [
 
 export const PRIO: Record<Priority, string> = { high: '#e5484d', med: '#f5a623', low: '#52606d' }
 
-// Architectural node types — what a node IS in the system.
-export const NTYPE: Record<NodeType, string> = {
-  app: '#a1a1a1', // app/core bar rendered with --ink in the component
-  feature: '#0cce6b',
-  component: '#0072f5',
-  infrastructure: '#16b8c9',
-  view: '#8a63d2',
-  data: '#e3679b',
-  idea: '#f5a623',
-  fix: '#38bdf8',
+// ---- Node types: single source of truth. Add a type here + to the NodeType union and you're done. ----
+export interface TypeMeta { label: string; color: string; hint: string; addable: boolean }
+export const TYPE_META: Record<NodeType, TypeMeta> = {
+  app: { label: 'App / Core', color: '#a1a1a1', hint: 'The root — everything builds off this', addable: false },
+  feature: { label: 'Feature', color: '#0cce6b', hint: 'A capability or feature area', addable: true },
+  component: { label: 'Component', color: '#0072f5', hint: 'A reusable building block', addable: true },
+  view: { label: 'View / Page', color: '#8a63d2', hint: 'A screen the user sees', addable: true },
+  data: { label: 'Data / Model', color: '#e3679b', hint: 'A schema or data entity', addable: true },
+  service: { label: 'Service', color: '#2dd4bf', hint: 'A backend service / API', addable: true },
+  infrastructure: { label: 'Infrastructure', color: '#16b8c9', hint: 'Plumbing, hosting, pipelines', addable: true },
+  module: { label: 'Module', color: '#8b8b94', hint: 'A folder / package', addable: true },
+  config: { label: 'Config', color: '#94a3b8', hint: 'Config, build, tooling', addable: true },
+  test: { label: 'Tests', color: '#84cc16', hint: 'Test suites', addable: true },
+  docs: { label: 'Docs', color: '#c084fc', hint: 'Documentation', addable: true },
+  idea: { label: 'Idea', color: '#f5a623', hint: 'Something new to build — exports & hits the board', addable: true },
+  fix: { label: 'Fix', color: '#38bdf8', hint: 'A fix or patch — exports & hits the board', addable: true },
 }
 
-// Types you can add (everything except the locked App/Core root).
-export const ADDABLE_TYPES: { type: NodeType; label: string; hint: string }[] = [
-  { type: 'feature', label: 'Feature', hint: 'A capability or feature area' },
-  { type: 'component', label: 'Component', hint: 'A reusable building block / module' },
-  { type: 'infrastructure', label: 'Infrastructure', hint: 'Backend, services, plumbing' },
-  { type: 'view', label: 'View / Page', hint: 'A screen the user sees' },
-  { type: 'data', label: 'Data / Model', hint: 'A schema or data entity' },
-  { type: 'idea', label: 'Idea', hint: 'Something new to build — exports & hits the board' },
-  { type: 'fix', label: 'Fix', hint: 'A fix or patch — exports & hits the board' },
-]
-
-export const TYPE_LABEL: Record<NodeType, string> = {
-  app: 'App / Core',
-  feature: 'Feature',
-  component: 'Component',
-  infrastructure: 'Infrastructure',
-  view: 'View / Page',
-  data: 'Data / Model',
-  idea: 'Idea',
-  fix: 'Fix',
-}
+export const NTYPE = Object.fromEntries(Object.entries(TYPE_META).map(([k, v]) => [k, v.color])) as Record<NodeType, string>
+export const TYPE_LABEL = Object.fromEntries(Object.entries(TYPE_META).map(([k, v]) => [k, v.label])) as Record<NodeType, string>
+export const ADDABLE_TYPES = (Object.keys(TYPE_META) as NodeType[])
+  .filter((t) => TYPE_META[t].addable)
+  .map((t) => ({ type: t, label: TYPE_META[t].label, hint: TYPE_META[t].hint }))
 
 // Orthogonal tags — markers layered on any node.
 export const TAGS: Record<NodeTag, { label: string; color: string; hint: string }> = {

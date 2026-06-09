@@ -29,6 +29,7 @@ export default function Overview() {
           <button className={ui.view === 'grid' ? 'active' : ''} onClick={() => setUI({ view: 'grid' })}>▦</button>
           <button className={ui.view === 'list' ? 'active' : ''} onClick={() => setUI({ view: 'list' })}>≡</button>
         </div>
+        <button className="btn" onClick={() => setModal({ type: 'import' })}>Import ↧</button>
         <button className="btn primary" onClick={() => setModal({ type: 'project' })}>
           Add New… <span style={{ opacity: 0.6 }}>▾</span>
         </button>

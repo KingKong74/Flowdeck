@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useApp } from '../store/AppContext'
-import type { Priority, NodeType, NodeTag, Status, WorkspaceKind, BacklogStatus } from '../types'
-import { COLORS, NTYPE, ADDABLE_TYPES, TAGS, TYPE_LABEL, isBuildable, syncNodeTask, uid } from '../lib/helpers'
+import type { Priority, NodeType, NodeTag, Status, WorkspaceKind, BacklogStatus, CanvasNode } from '../types'
+import { COLORS, NTYPE, ADDABLE_TYPES, TAGS, TYPE_LABEL, barColor, isBuildable, syncNodeTask, uid } from '../lib/helpers'
 import { buildableNodes, canvasToMarkdown, canvasToJSON, canvasToPrompt, download, copyToClipboard } from '../lib/exportMap'
+import { buildCanvasFromPaths, pathsFromFileList, readContents, readDrop, type ImportResult } from '../lib/importProject'
+import { getFile, setFiles } from '../lib/fileStore'
 
 export default function Modals() {
   const { modal, setModal } = useApp()
@@ -24,6 +26,8 @@ function Body() {
     case 'backlog': return <BacklogForm id={modal.id} status={modal.status} />
     case 'sync': return <SyncForm />
     case 'help': return <HelpModal />
+    case 'import': return <ImportForm target={modal.target} />
+    case 'explain': return <ExplainModal id={modal.id} />
     default: return null
   }
 }
@@ -172,6 +176,8 @@ function NodeForm({ id }: { id: string }) {
   const [tags, setTags] = useState<NodeTag[]>(n?.tags ?? [])
   if (!n) return null
   const isApp = n.type === 'app'
+  const appCount = p.canvas.nodes.filter((x) => x.type === 'app').length
+  const canDelete = !isApp || appCount > 1
   const toggleTag = (tg: NodeTag) => setTags((cur) => (cur.includes(tg) ? cur.filter((x) => x !== tg) : [...cur, tg]))
 
   const save = () => {
@@ -186,6 +192,7 @@ function NodeForm({ id }: { id: string }) {
     close()
   }
   const del = () => {
+    if (isApp && appCount <= 1) return
     mutate((d) => {
       const pr = d.projects.find((x) => x.id === p.id)!
       pr.canvas.nodes = pr.canvas.nodes.filter((x) => x.id !== id)
@@ -201,7 +208,11 @@ function NodeForm({ id }: { id: string }) {
       <Field label="Title"><input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus /></Field>
       <Field label="Note"><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="details, scope, questions…" /></Field>
       {isApp ? (
-        <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>This is the App / Core root — every map has one and it can't be deleted or retyped.</p>
+        <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          {appCount > 1
+            ? 'This is a Core node. You have more than one, so this duplicate can be deleted.'
+            : 'This is the App / Core root — every map keeps one, so the last core can\u2019t be deleted or retyped.'}
+        </p>
       ) : (
         <>
           <Field label="Type">
@@ -226,7 +237,7 @@ function NodeForm({ id }: { id: string }) {
         </>
       )}
       <div className="mact">
-        {!isApp && <button className="btn ghost danger" onClick={del}>Delete</button>}
+        {canDelete && <button className="btn ghost danger" onClick={del}>Delete</button>}
         <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={save}>Save</button>
       </div>
     </Shell>
@@ -329,6 +340,143 @@ function HelpModal() {
         </ul>
       </div>
       <div className="mact"><button className="btn primary" onClick={close}>Got it</button></div>
+    </Shell>
+  )
+}
+
+/* ---- import a project folder ---- */
+function ImportForm({ target }: { target?: string }) {
+  const { mutate, setModal, setUI, openProject, ui } = useApp()
+  const close = () => setModal({ type: null })
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const [contents, setContents] = useState<Record<string, string>>({})
+  const [drag, setDrag] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { const el = inputRef.current; if (el) { el.setAttribute('webkitdirectory', ''); el.setAttribute('directory', '') } }, [])
+
+  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setBusy(true)
+    setResult(buildCanvasFromPaths(pathsFromFileList(files)))
+    setContents(await readContents(files))
+    setBusy(false)
+  }
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault(); setDrag(false)
+    const items = Array.from(e.dataTransfer.items)
+    setBusy(true)
+    if (items.length) {
+      const { paths, contents: c } = await readDrop(items)
+      if (paths.length) { setResult(buildCanvasFromPaths(paths)); setContents(c) }
+    } else if (e.dataTransfer.files?.length) {
+      const files = Array.from(e.dataTransfer.files)
+      setResult(buildCanvasFromPaths(pathsFromFileList(files)))
+      setContents(await readContents(files))
+    }
+    setBusy(false)
+  }
+
+  const persistContents = (nodes: { id: string; path?: string }[]) => {
+    const byId: Record<string, string> = {}
+    nodes.forEach((n) => { if (n.path && contents[n.path]) byId[n.id] = contents[n.path] })
+    if (Object.keys(byId).length) setFiles(byId)
+  }
+
+  const create = () => {
+    if (!result) return
+    if (target) {
+      const idmap: { id: string; path?: string }[] = []
+      mutate((d) => {
+        const pr = d.projects.find((p) => p.id === target)!
+        const dy = pr.canvas.nodes.length ? pr.canvas.nodes.reduce((m, n) => Math.max(m, n.y), 0) + 160 : 0
+        result.canvas.nodes.forEach((n) => { const nn = { ...n, y: n.y + dy }; pr.canvas.nodes.push(nn); idmap.push({ id: nn.id, path: nn.path }) })
+        result.canvas.edges.forEach((e) => pr.canvas.edges.push(e))
+      })
+      persistContents(idmap)
+      setUI({ projectTab: 'map' })
+    } else {
+      const nid = uid()
+      mutate((d) => d.projects.push({ id: nid, name: result.name, color: COLORS[d.projects.length % COLORS.length], workspace: ui.workspace, sprints: [], tasks: [], canvas: result.canvas }))
+      persistContents(result.canvas.nodes)
+      openProject(nid)
+      setUI({ projectTab: 'map' })
+    }
+    close()
+  }
+
+  return (
+    <Shell close={close} wide>
+      <h3>{target ? 'Import into this map' : 'Import a project'}</h3>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
+        Pick your project folder — Flowdeck reads the directory structure <b>in your browser</b> (nothing is uploaded) and scaffolds a map from it. <code>node_modules</code>, build output and lockfiles are skipped.
+      </p>
+      <div
+        className={'dropzone' + (drag ? ' over' : '')}
+        onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        onClick={() => inputRef.current?.click()}
+      >
+        <input ref={inputRef} type="file" multiple style={{ display: 'none' }} onChange={onFiles} />
+        {busy ? (
+          <div className="dz-empty"><b>Reading folder…</b><span>parsing structure & file contents</span></div>
+        ) : result ? (
+          <div className="dz-res">
+            <b>{result.name}</b>
+            <span>{result.nodeCount} nodes · {result.fileCount} files scanned</span>
+            <span className="muted">Click to choose a different folder</span>
+          </div>
+        ) : (
+          <div className="dz-empty"><b>Drop your project folder here</b><span>or click to choose</span></div>
+        )}
+      </div>
+      <p style={{ fontSize: 11.5, color: 'var(--muted-2)' }}>Folders and files become nodes (typed automatically), nested up to 4 levels with the root as the core. Big folders cap at 30 files; prune and tag from there.</p>
+      <div className="mact">
+        <button className="btn ghost" onClick={close}>Cancel</button>
+        <button className="btn primary" disabled={!result} onClick={create}>{target ? 'Add to map' : 'Create project'}</button>
+      </div>
+    </Shell>
+  )
+}
+
+/* ---- explain a node / file ---- */
+function summarize(n: CanvasNode, content?: string): string {
+  if (!content) return n.note || `A ${TYPE_LABEL[n.type].toLowerCase()} in your project.`
+  const lines = content.split('\n').length
+  const ext = (n.path?.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase()
+  const exports = [...content.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|interface|type|enum)\s+([A-Za-z0-9_]+)/g)].map((m) => m[1])
+  const imports = (content.match(/^\s*import\s/gm) || []).length
+  const bits = [`${lines} lines`]
+  if (ext) bits.push(`.${ext}`)
+  if (imports) bits.push(`${imports} import${imports > 1 ? 's' : ''}`)
+  if (exports.length) bits.push(`exports ${exports.slice(0, 4).join(', ')}${exports.length > 4 ? '…' : ''}`)
+  return bits.join('  ·  ')
+}
+function ExplainModal({ id }: { id: string }) {
+  const { activeProject, setModal } = useApp()
+  const close = () => setModal({ type: null })
+  const p = activeProject()
+  const n = p?.canvas.nodes.find((x) => x.id === id)
+  if (!n) return null
+  const content = getFile(id)
+  return (
+    <Shell close={close} wide>
+      <h3>{n.title}</h3>
+      <div className="exp-meta">
+        <span className="exp-pill" style={{ color: barColor(n), borderColor: barColor(n) }}>{TYPE_LABEL[n.type]}</span>
+        {n.path && <span className="exp-path">{n.path}</span>}
+      </div>
+      <p className="exp-sum">{summarize(n, content)}</p>
+      {content ? (
+        <pre className="exp-code">{content}</pre>
+      ) : (
+        <p style={{ fontSize: 12.5, color: 'var(--muted-2)' }}>
+          {n.note ? n.note + ' · ' : ''}No file contents captured (manual node, binary, or oversized). When you connect the Claude API, a full AI walkthrough of this file will appear here.
+        </p>
+      )}
+      <div className="mact"><button className="btn primary" onClick={close}>Close</button></div>
     </Shell>
   )
 }

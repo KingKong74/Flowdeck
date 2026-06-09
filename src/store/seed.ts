@@ -141,7 +141,7 @@ function migrateNode(n: CanvasNode): CanvasNode {
   const legacy = n.type as string
   let type: NodeType = 'feature'
   let tags: string[] = Array.isArray(n.tags) ? [...(n.tags as string[])] : []
-  if (['app', 'feature', 'component', 'infrastructure', 'view', 'data', 'idea', 'fix'].includes(legacy)) type = legacy as NodeType
+  if (['app', 'feature', 'component', 'infrastructure', 'view', 'data', 'idea', 'fix', 'module', 'service', 'config', 'test', 'docs'].includes(legacy)) type = legacy as NodeType
   else if (legacy === 'risk') { type = 'component'; if (!tags.includes('risk')) tags.push('risk') }
   else if (legacy === 'milestone') type = 'feature'
   // 'fix' is a TYPE now, not a tag

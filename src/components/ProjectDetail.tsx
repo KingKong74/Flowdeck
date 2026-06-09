@@ -1,6 +1,7 @@
 import { useApp } from '../store/AppContext'
 import Board from './Board'
 import FlowMap from './FlowMap'
+import Structure from './Structure'
 
 export default function ProjectDetail() {
   const { ui, setUI, wsProjects, activeProject, openProject, goOverview, setModal, mutate } = useApp()
@@ -60,8 +61,9 @@ export default function ProjectDetail() {
         <div className="ptabs">
           <button className={'ptab' + (ui.projectTab === 'board' ? ' active' : '')} onClick={() => setUI({ projectTab: 'board' })}>Board</button>
           <button className={'ptab' + (ui.projectTab === 'map' ? ' active' : '')} onClick={() => setUI({ projectTab: 'map' })}>Map</button>
+          <button className={'ptab' + (ui.projectTab === 'tree' ? ' active' : '')} onClick={() => setUI({ projectTab: 'tree' })}>Tree</button>
         </div>
-        {ui.projectTab === 'board' ? <Board project={p} /> : <FlowMap key={p.id} project={p} />}
+        {ui.projectTab === 'board' ? <Board project={p} /> : ui.projectTab === 'map' ? <FlowMap key={p.id} project={p} /> : <Structure project={p} />}
       </div>
     </>
   )

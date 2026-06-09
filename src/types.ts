@@ -2,7 +2,9 @@ export type WorkspaceKind = 'personal' | 'professional'
 export type Status = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done'
 export type Priority = 'high' | 'med' | 'low'
 export type SprintStatus = 'planned' | 'active' | 'done'
-export type NodeType = 'app' | 'feature' | 'component' | 'infrastructure' | 'view' | 'data' | 'idea' | 'fix'
+export type NodeType =
+  | 'app' | 'feature' | 'component' | 'infrastructure' | 'view' | 'data' | 'idea' | 'fix'
+  | 'module' | 'service' | 'config' | 'test' | 'docs'
 export type NodeTag = 'idea' | 'risk'
 export type BacklogStatus = 'todo' | 'doing' | 'done'
 
@@ -47,6 +49,7 @@ export interface CanvasNode {
   x: number
   y: number
   color: string
+  path?: string // source path for imported nodes
 }
 
 export interface CanvasEdge {

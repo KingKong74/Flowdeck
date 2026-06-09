@@ -4,6 +4,7 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  MiniMap,
   Handle,
   Position,
   ConnectionMode,
@@ -89,6 +90,23 @@ function Canvas({ project }: { project: Project }) {
     const n = project.canvas.nodes.find((x) => x.id === id)!
     return rf.flowToScreenPosition({ x: n.x + 104, y: n.y + 30 })
   }
+  // nearest node to a screen point (direct hit first, then within a tolerance radius)
+  const nearestNodeId = (x: number, y: number, exclude: string): string | null => {
+    const direct = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('.react-flow__node')?.getAttribute('data-id')
+    if (direct && direct !== exclude) return direct
+    let best: string | null = null
+    let bestD = 100
+    document.querySelectorAll<HTMLElement>('.react-flow__node').forEach((el) => {
+      const id = el.getAttribute('data-id')
+      if (!id || id === exclude) return
+      const r = el.getBoundingClientRect()
+      const dx = Math.max(r.left - x, 0, x - r.right)
+      const dy = Math.max(r.top - y, 0, y - r.bottom)
+      const d = Math.hypot(dx, dy)
+      if (d < bestD) { bestD = d; best = id }
+    })
+    return best
+  }
   const onWrapMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 2) return
     const el = (e.target as HTMLElement).closest('.react-flow__node') as HTMLElement | null
@@ -100,16 +118,14 @@ function Canvas({ project }: { project: Project }) {
   }
   useEffect(() => {
     if (!rc) return
-    const targetUnder = (x: number, y: number) => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('.react-flow__node')?.getAttribute('data-id') || null
     const move = (e: MouseEvent) => {
       if (Math.hypot(e.clientX - rc.icx, e.clientY - rc.icy) > 5) rcMoved.current = true
       setRc((r) => (r ? { ...r, cx: e.clientX, cy: e.clientY } : r))
-      const t = targetUnder(e.clientX, e.clientY)
-      setRcHover(t && t !== rc.from ? t : null)
+      setRcHover(nearestNodeId(e.clientX, e.clientY, rc.from))
     }
     const up = (e: MouseEvent) => {
-      const to = targetUnder(e.clientX, e.clientY)
-      if (rcMoved.current && to && to !== rc.from) createEdgeSmart(rc.from, to)
+      const to = nearestNodeId(e.clientX, e.clientY, rc.from)
+      if (rcMoved.current && to) createEdgeSmart(rc.from, to)
       setRc(null); setRcHover(null)
     }
     window.addEventListener('mousemove', move)
@@ -123,10 +139,14 @@ function Canvas({ project }: { project: Project }) {
   const onNodeDragStop = (_: unknown, node: Node) =>
     mutate((d) => { const n = d.projects.find((p) => p.id === project.id)!.canvas.nodes.find((x) => x.id === node.id); if (n) { n.x = node.position.x; n.y = node.position.y } })
 
-  const onBeforeDelete = async ({ nodes: nds, edges: eds }: { nodes: Node[]; edges: Edge[] }) => ({
-    nodes: nds.filter((n) => project.canvas.nodes.find((x) => x.id === n.id)?.type !== 'app'),
-    edges: eds,
-  })
+  const onBeforeDelete = async ({ nodes: nds, edges: eds }: { nodes: Node[]; edges: Edge[] }) => {
+    const apps = project.canvas.nodes.filter((n) => n.type === 'app').map((n) => n.id)
+    const deletingApps = nds.filter((n) => apps.includes(n.id)).map((n) => n.id)
+    // keep at least one core node alive
+    let keep = nds
+    if (deletingApps.length && apps.length - deletingApps.length < 1) keep = nds.filter((n) => n.id !== deletingApps[0])
+    return { nodes: keep, edges: eds }
+  }
   const onNodesDelete = (deleted: Node[]) => {
     const ids = deleted.map((n) => n.id)
     mutate((d) => {
@@ -168,6 +188,7 @@ function Canvas({ project }: { project: Project }) {
   }
 
   const menuIsApp = nodeMenu && project.canvas.nodes.find((n) => n.id === nodeMenu.id)?.type === 'app'
+  const appCount = project.canvas.nodes.filter((n) => n.type === 'app').length
   const displayNodes = useMemo(
     () => (rc || rcHover ? nodes.map((n) => (n.id === rc?.from ? { ...n, className: 'connect-src' } : n.id === rcHover ? { ...n, className: 'connect-tgt' } : n)) : nodes),
     [nodes, rc?.from, rcHover],
@@ -185,6 +206,7 @@ function Canvas({ project }: { project: Project }) {
         <button className="btn sm" onClick={() => addNode('idea')}><span style={{ width: 8, height: 8, borderRadius: 2, background: NTYPE.idea, display: 'inline-block' }} /> Idea</button>
         <button className="btn sm" onClick={() => addNode('fix')}><span style={{ width: 8, height: 8, borderRadius: 2, background: NTYPE.fix, display: 'inline-block' }} /> Fix</button>
         <span className="hint">{rc ? 'release on a node to connect' : 'right-click to add · drag a dot or right-drag a node to connect'}</span>
+        <button className="btn sm" onClick={() => setModal({ type: 'import', target: project.id })}>Import ↧</button>
         <button className="btn sm" onClick={() => setModal({ type: 'sync' })}>Export / Sync ▾</button>
         <button className="ico" title="Help" onClick={() => setModal({ type: 'help' })}>?</button>
         <button className="ico" title="Fullscreen" onClick={(e) => toggleFullscreen((e.currentTarget as HTMLElement).closest('.main'))}>⤢</button>
@@ -219,12 +241,24 @@ function Canvas({ project }: { project: Project }) {
           connectionRadius={90}
           connectionLineStyle={{ stroke: 'var(--ink)', strokeWidth: 2 }}
           panOnDrag={[0]}
+          minZoom={0.15}
+          maxZoom={1.75}
           fitView
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           proOptions={{ hideAttribution: true }}
         >
           <Background color={theme === 'light' ? '#e4e4e7' : '#181818'} gap={24} size={1} />
           <Controls showInteractive={false} />
+          <MiniMap
+            pannable
+            zoomable
+            ariaLabel="Map overview"
+            nodeStrokeWidth={2}
+            nodeColor={(node) => {
+              const cn = project.canvas.nodes.find((c) => c.id === node.id)
+              return cn ? NTYPE[cn.type] : '#888'
+            }}
+          />
         </ReactFlow>
 
         {rc && (
@@ -247,7 +281,7 @@ function Canvas({ project }: { project: Project }) {
             {quickAdds({ fromId: nodeMenu.id })}
             <div className="sep" />
             <button onClick={() => { setModal({ type: 'node', id: nodeMenu.id }); clearMenus() }}>✎ Edit node</button>
-            {!menuIsApp && <button onClick={() => { rf.deleteElements({ nodes: [{ id: nodeMenu.id }] }); clearMenus() }}>× Delete node</button>}
+            {(!menuIsApp || appCount > 1) && <button onClick={() => { rf.deleteElements({ nodes: [{ id: nodeMenu.id }] }); clearMenus() }}>× Delete node</button>}
           </div>
         )}
       </div>
@@ -262,6 +296,7 @@ function FeatureNode({ data, selected }: NodeProps) {
   const proj = appData.projects.find((p) => p.id === pid)
   const n = proj?.canvas.nodes.find((x) => x.id === nid)
   const task = proj?.tasks.find((t) => t.mapNodeId === nid)
+  const appCount = proj?.canvas.nodes.filter((x) => x.type === 'app').length ?? 1
   const [editTitle, setEditTitle] = useState(false)
   const [editNote, setEditNote] = useState(false)
   const [tagMenu, setTagMenu] = useState(false)
@@ -291,8 +326,12 @@ function FeatureNode({ data, selected }: NodeProps) {
   return (
     <div className={'fnode' + (selected ? ' selected' : '') + (isApp ? ' fnode-core' : '')}>
       <Handle id="r" type="source" position={Position.Right} />
+      <Handle id="r" type="target" position={Position.Right} />
+      <Handle id="l" type="source" position={Position.Left} />
       <Handle id="l" type="target" position={Position.Left} />
       <Handle id="t" type="source" position={Position.Top} />
+      <Handle id="t" type="target" position={Position.Top} />
+      <Handle id="b" type="source" position={Position.Bottom} />
       <Handle id="b" type="target" position={Position.Bottom} />
 
       <div className="fnode-bar" style={{ background: barColor(n) }} />
@@ -300,6 +339,7 @@ function FeatureNode({ data, selected }: NodeProps) {
         {col && <span className="nstat" title={`Board: ${col.nm}`} style={{ background: col.t }} />}
         <span className="ntype" style={{ color: barColor(n) }}>{isApp ? '★ core' : n.type}</span>
         <span className="nacts">
+          <button className="mbtn nodrag" title="Explain" onClick={() => setModal({ type: 'explain', id: n.id })}>ⓘ</button>
           {!isApp && (
             <span className="tagwrap nodrag">
               <button className="mbtn" title="Tags" onClick={() => setTagMenu((v) => !v)}>#</button>
@@ -315,7 +355,7 @@ function FeatureNode({ data, selected }: NodeProps) {
             </span>
           )}
           <button className="mbtn nodrag" onClick={() => setModal({ type: 'node', id: n.id })}>✎</button>
-          {!isApp && <button className="mbtn nodrag" onClick={() => rf.deleteElements({ nodes: [{ id: n.id }] })}>×</button>}
+          {(!isApp || appCount > 1) && <button className="mbtn nodrag" onClick={() => rf.deleteElements({ nodes: [{ id: n.id }] })}>×</button>}
         </span>
       </div>
 
